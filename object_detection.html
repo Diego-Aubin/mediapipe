@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Détection d'objets - MediaPipe</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f4f4f9; }
+    .controls { margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #fff; padding: 10px; border-radius: 5px; }
+    #container { position: relative; width: 640px; height: 480px; border: 2px solid #ccc; background-color: #000; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 640px; height: 480px; object-fit: cover; }
+  </style>
+</head>
+<body>
+
+  <h2>Détection d'objets (Cadre simple)</h2>
+  
+  <div class="controls">
+    <button id="toggleBtn" disabled>Chargement...</button>
+    <label>Modèle :
+      <select id="modelSelect">
+        <option value="efficientdet_lite0">EfficientDet-Lite0</option>
+        <option value="mobilenet_v2">MobileNet V2</option>
+      </select>
+    </label>
+    <label>Max Objets : <input type="number" id="maxResults" value="5" min="1" max="20" style="width: 50px;"></label>
+    <label>Seuil : <input type="range" id="scoreThreshold" min="0.1" max="0.9" step="0.1" value="0.5"></label>
+  </div>
+
+  <div id="container">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+  </div>
+
+  <script type="module">
+    import { ObjectDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("output_canvas");
+    const ctx = canvas.getContext("2d");
+    const toggleBtn = document.getElementById("toggleBtn");
+    const modelSelect = document.getElementById("modelSelect");
+    const maxResultsInput = document.getElementById("maxResults");
+    const scoreThresholdInput = document.getElementById("scoreThreshold");
+
+    let objectDetector = undefined;
+    let isPredicting = false;
+    let lastVideoTime = -1;
+
+    async function initDetector() {
+      toggleBtn.disabled = true;
+      toggleBtn.innerText = "Chargement...";
+      
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+      
+      const modelAssetPath = modelSelect.value === "mobilenet_v2" 
+        ? "https://storage.googleapis.com/mediapipe-models/object_detector/mobilenet_v2/float16/1/mobilenet_v2.tflite"
+        : "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
+
+      objectDetector = await ObjectDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: modelAssetPath,
+          delegate: "GPU"
+        },
+        scoreThreshold: parseFloat(scoreThresholdInput.value),
+        maxResults: parseInt(maxResultsInput.value),
+        runningMode: "VIDEO"
+      });
+
+      toggleBtn.disabled = false;
+      toggleBtn.innerText = isPredicting ? "Stopper" : "Démarrer";
+    }
+
+    async function initWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+      } catch (err) {
+        console.error("Erreur webcam :", err);
+      }
+    }
+
+    initDetector();
+    initWebcam();
+
+    modelSelect.addEventListener("change", initDetector);
+    scoreThresholdInput.addEventListener("change", initDetector);
+    maxResultsInput.addEventListener("change", initDetector);
+
+    async function predictWebcam() {
+      if (!isPredicting) return;
+
+      if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        
+        const results = objectDetector.detectForVideo(video, performance.now());
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (results.detections) {
+          for (const detection of results.detections) {
+            const box = detection.boundingBox;
+            const category = detection.categories[0];
+            const label = `${category.categoryName} (${Math.round(category.score * 100)}%)`;
+
+            // Utilisation de strokeRect pour afficher UNIQUEMENT le contour (le cadre)
+            ctx.strokeStyle = "#00FF00";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(box.originX, box.originY, box.width, box.height);
+
+            // Affichage du texte du label au-dessus du cadre
+            ctx.fillStyle = "#00FF00";
+            ctx.font = "16px Arial";
+            ctx.fillText(label, box.originX, box.originY > 20 ? box.originY - 5 : box.originY + 20);
+          }
+        }
+      }
+      window.requestAnimationFrame(predictWebcam);
+    }
+
+    toggleBtn.addEventListener("click", () => {
+      isPredicting = !isPredicting;
+      toggleBtn.innerText = isPredicting ? "Stopper" : "Démarrer";
+      if (isPredicting) predictWebcam();
+    });
+  </script>
+</body>
+</html>
